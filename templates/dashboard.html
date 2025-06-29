@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>IoT Sensor Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+        .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .chart { background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); padding: 15px; }
+        .alerts { grid-column: span 2; }
+        .alert-item { padding: 10px; margin: 5px 0; background: #ffebee; border-left: 4px solid #f44336; }
+    </style>
+</head>
+<body>
+    <h1>IoT Sensor Data Monitoring</h1>
+    
+    <div class="dashboard">
+        <div class="chart" id="temperatureChart"></div>
+        <div class="chart" id="humidityChart"></div>
+        <div class="chart" id="pressureChart"></div>
+        <div class="chart" id="anomalyChart"></div>
+        
+        <div class="alerts">
+            <h2>Recent Alerts</h2>
+            <div id="alertsContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let sensorData = [];
+        let anomalies = [];
+        
+        // Initialize charts
+        const charts = {
+            temperature: initChart('temperatureChart', 'Temperature', '°C'),
+            humidity: initChart('humidityChart', 'Humidity', '%'),
+            pressure: initChart('pressureChart', 'Pressure', 'hPa')
+        };
+        
+        function initChart(divId, title, unit) {
+            return Plotly.newPlot(divId, [{
+                y: [],
+                x: [],
+                mode: 'lines+markers',
+                name: title,
+                line: {color: '#4285F4'},
+                marker: {size: 8}
+            }], {
+                title: `${title} (${unit})`,
+                xaxis: {title: 'Time'},
+                yaxis: {title: unit}
+            }, {responsive: true});
+        }
+        
+        // Socket event handlers
+        socket.on('init_data', function(data) {
+            sensorData = data.sensor_data || [];
+            anomalies = data.anomalies || [];
+            updateCharts();
+            updateAlerts();
+        });
+        
+        socket.on('new_data', function(data) {
+            sensorData.push(data);
+            if (sensorData.length > 100) sensorData.shift();
+            updateCharts();
+        });
+        
+        socket.on('new_alert', function(alert) {
+            anomalies.unshift(alert);
+            if (anomalies.length > 20) anomalies.pop();
+            updateAlerts();
+            updateAnomalyMarkers();
+            
+            // Show notification
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert-item';
+            alertDiv.textContent = `ALERT: Anomaly detected at ${new Date(alert.timestamp).toLocaleString()}`;
+            document.getElementById('alertsContainer').prepend(alertDiv);
+        });
+        
+        // Update charts with latest data
+        function updateCharts() {
+            if (sensorData.length === 0) return;
+            
+            const timestamps = sensorData.map(d => new Date(d.timestamp));
+            
+            // Update each chart
+            for (const [metric, chart] of Object.entries(charts)) {
+                const values = sensorData.map(d => d[metric.toLowerCase()] || null);
+                Plotly.update(chart, {
+                    x: [timestamps],
+                    y: [values]
+                });
+            }
+        }
+        
+        // Update anomaly markers
+        function updateAnomalyMarkers() {
+            if (anomalies.length === 0) return;
+            
+            for (const [metric, chart] of Object.entries(charts)) {
+                const anomalyTimestamps = [];
+                const anomalyValues = [];
+                
+                anomalies.forEach(anomaly => {
+                    const value = anomaly.data[metric.toLowerCase()];
+                    if (value !== undefined) {
+                        anomalyTimestamps.push(new Date(anomaly.timestamp));
+                        anomalyValues.push(value);
+                    }
+                });
+                
+                // Add anomaly trace if not exists
+                if (chart.data.length === 1) {
+                    Plotly.addTraces(chart, {
+                        x: anomalyTimestamps,
+                        y: anomalyValues,
+                        mode: 'markers',
+                        name: 'Anomaly',
+                        marker: {
+                            color: '#FF0000',
+                            size: 10,
+                            symbol: 'x'
+                        }
+                    });
+                } else {
+                    Plotly.restyle(chart, {
+                        x: [anomalyTimestamps],
+                        y: [anomalyValues]
+                    }, [1]);
+                }
+            }
+        }
+        
+        // Update alerts list
+        function updateAlerts() {
+            const container = document.getElementById('alertsContainer');
+            container.innerHTML = '';
+            
+            anomalies.forEach(alert => {
+                const alertDiv = document.createElement('div');
+                alertDiv.className = 'alert-item';
+                alertDiv.textContent = `ALERT: Anomaly detected at ${new Date(alert.timestamp).toLocaleString()}`;
+                container.appendChild(alertDiv);
+            });
+        }
+    </script>
+</body>
+</html>
